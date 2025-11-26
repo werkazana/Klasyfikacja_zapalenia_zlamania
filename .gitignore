@@ -1,7 +1,14 @@
 # --- DANE ---
 archive/
 chest_xray_new/
-klasyfikacja_zlaman/
+klasyfikacja_zlaman/XR_Bones/
+klasyfikacja_zlaman/XR_Bones_classification/
+klasyfikacja_zlaman/XR_Bones_new/
+klasyfikacja_zlaman/XR_ELBOW_classification/
+klasyfikacja_zlaman/XR_FINGER_classification/
+klasyfikacja_zlaman/XR_FOREARM_classification/
+klasyfikacja_zlaman/XR_HAND_classification/
+klasyfikacja_zlaman/XR_SHOULDER_classification/
 XR_*/
 *.zip
 *.rar
