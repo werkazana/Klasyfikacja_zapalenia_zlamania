@@ -1,0 +1,22 @@
+# --- DANE ---
+archive/
+chest_xray_new/
+klasyfikacja_zlaman/
+XR_*/
+*.zip
+*.rar
+
+# --- Środowiska ---
+.venv/
+venv/
+env/
+
+# --- Modele ---
+checkpoints/
+*.pth
+*.pt
+
+# --- Cache ---
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
