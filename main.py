@@ -1,10 +1,16 @@
-import os
 import argparse
+import os
+from collections import Counter
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from src.utils.config import Config
+from src.utils.config import (
+    Config,
+    make_pneumonia_dataset_config,
+    make_fracture_dataset_config,
+)
 from src.utils.misc import seed_everything, ensure_dirs
 from src.data.pipeline import (
     build_datasets_and_loaders,
@@ -12,7 +18,7 @@ from src.data.pipeline import (
     show_random_grid,
 )
 from src.models.vgg import build_vgg16
-from src.models.resnet import build_resnet50 
+from src.models.resnet import build_resnet50
 from src.training.trainer import Trainer
 from src.utils.visualize import (
     plot_history,
@@ -20,245 +26,279 @@ from src.utils.visualize import (
     plot_cam_evolution,
 )
 
-
 def parse_args():
     p = argparse.ArgumentParser()
 
-    p.add_argument("--dataset_type",
-                   type=str,
-                   default="fracture",
-                   choices=["pneumonia", "fracture"])
+    p.add_argument(
+        "--dataset_type",
+        type=str,
+        choices=["pneumonia", "fracture"],
+        default="pneumonia",
+    )
 
-    p.add_argument("--category",
-                   type=str,
-                   default="ELBOW")
+    p.add_argument(
+        "--category",
+        type=str,
+        default="ELBOW",
+        help="dla fracture: ELBOW, HAND, SHOULDER, FOREARM, FINGER",
+    )
 
-    p.add_argument("--model",
-                   type=str,
-                   default="vgg16",
-                   choices=["vgg16", "resnet"],
-                   help="Wybór architektury: vgg16 lub resnet50")
+    p.add_argument(
+        "--model",
+        type=str,
+        choices=["vgg16", "resnet"],
+        default="vgg16",
+    )
 
     p.add_argument("--epochs", type=int)
     p.add_argument("--batch_size", type=int)
 
-    p.add_argument("--visualize",
-                   action="store_true",
-                   help="Wizualizacja wyników bez treningu")
-
-    p.add_argument("--checkpoint",
-                   type=str,
-                   default="best_model.pth")
-
-    p.add_argument("--no-cam",
-                   action="store_true",
-                   help="Wyłącz CAM")
     p.add_argument(
         "--use_original_split",
-                action="store_true",
-                help="Użyj oryginalnego podziału chest_xray (bez chest_xray_new)",
+        action="store_true",
+        help="dla pneumonia użyj oryginalnego podziału (bez chest_xray_new)",
+    )
+
+    # tryb visualize tylko z checkpointu
+    p.add_argument(
+        "--visualize",
+        action="store_true",
+        help="użyj zapisanego modelu i pokaż macierz pomyłek + raport (bez treningu)",
+    )
+    p.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="nazwa checkpointu, np. epoch_9_acc_0.85.pth",
+    )
+
+    p.add_argument(
+        "--no-cam",
+        action="store_true",
+        help="wyłącz rysowanie CAM",
     )
 
     return p.parse_args()
 
 
+
+# =========================================================
+# MAIN
+# =========================================================
+
 def main():
     args = parse_args()
 
-    cfg = Config(
-        dataset_type=args.dataset_type,
-        current_category=args.category,
-    )
+    BASE_DIR = r"C:\Users\Weronika\Desktop\inzynierka\vgg16"
 
-    if args.epochs:
-        cfg.max_epochs = args.epochs
+    # ----------------------------------
+    # CONFIG injection – wybór datasetu
+    # ----------------------------------
+    if args.dataset_type == "pneumonia":
+        dataset_cfg = make_pneumonia_dataset_config(BASE_DIR)
+    else:
+        dataset_cfg = make_fracture_dataset_config(BASE_DIR, args.category)
+
+    cfg = Config(base_dir=BASE_DIR, dataset=dataset_cfg)
+
     if args.batch_size:
         cfg.batch_size = args.batch_size
+    if args.epochs:
+        cfg.dataset.max_epochs = args.epochs
 
-    print(f"Dataset: {cfg.dataset_path}")
-    print(f"Model: {args.model}")
+    print(f"\nDataset: {cfg.dataset_type}")
+    print("Path:", cfg.dataset_path)
+    print("Klasy:", cfg.classes)
+    print("Model:", args.model)
+    print("--------------------------------------")
 
+    # ----------------------------------
+    # Seed + foldery
+    # ----------------------------------
     seed_everything(cfg.seed)
     ensure_dirs(cfg.checkpoints_dir, cfg.samples_dir)
 
-    #PNEUMONIA
-  
-  
-    if cfg.dataset_type == "pneumonia":
+    # ----------------------------------
+    # Pneumonia – ewentualny split 80/10/10
+    # ----------------------------------
+    if cfg.dataset_type == "pneumonia" and not args.use_original_split:
+        chest_new = os.path.join(BASE_DIR, "archive", "chest_xray_new")
+        if not os.path.exists(chest_new):
+            print("Tworzę chest_xray_new...")
+            from src.data.prepare_pneumonia_split import make_split
+            make_split(cfg.dataset.path, chest_new)
 
-        print("\npodział pneumonia")
-        dataset_path = cfg.dataset_path                      # oryginalny chest_xray
-        new_dataset_path = os.path.join(cfg.base_dir, "archive", "chest_xray_new")
+        cfg.dataset.path = chest_new
+        print("Używam chest_xray_new")
 
-        if args.use_original_split:
-            #ORYGINALNY chest_xray/train/val/test
-            print("chest_xray (train/val/test)")
-            dataset_base = dataset_path
-
-        else:
-            #podział (80/10/10)
-            print("tworzę chest_xray_new (80/10/10)")
-
-            if not os.path.exists(new_dataset_path):
-                print("Tworzę chest_xray_new (80/10/10)")
-
-                import shutil
-                import random as pyrand
-
-                for split in ["train", "val", "test"]:
-                    for cls in ["NORMAL", "PNEUMONIA"]:
-                        os.makedirs(os.path.join(new_dataset_path, split, cls), exist_ok=True)
-
-                for cls in ["NORMAL", "PNEUMONIA"]:
-                    all_files = []
-
-                    for split in ["train", "val", "test"]:
-                        src = os.path.join(dataset_path, split, cls)
-                        files = os.listdir(src)
-                        all_files.extend([(f, src) for f in files])
-
-                    pyrand.shuffle(all_files)
-                    n = len(all_files)
-
-                    train_files = all_files[: int(n * 0.8)]
-                    val_files   = all_files[int(n * 0.8):int(n * 0.9)]
-                    test_files  = all_files[int(n * 0.9):]
-
-                    for f, src in train_files:
-                        shutil.copy(os.path.join(src, f),
-                                    os.path.join(new_dataset_path, "train", cls, f))
-
-                    for f, src in val_files:
-                        shutil.copy(os.path.join(src, f),
-                                    os.path.join(new_dataset_path, "val", cls, f))
-
-                    for f, src in test_files:
-                        shutil.copy(os.path.join(src, f),
-                                    os.path.join(new_dataset_path, "test", cls, f))
-
-                print("chest_xray_new utworzono\n")
-            else:
-                print("chest_xray_new już istnieje\n")
-
-            dataset_base = new_dataset_path
-
-
-
-
-    
-    #FRACTURE
- 
-    else:
-        dataset_base = cfg.dataset_path
-        print("Korzystam z gotowego splitu fracture.\n")
-
-
-    #DANE
-    image_datasets, dataloaders, dataset_sizes, class_names = \
-        build_datasets_and_loaders(dataset_base,
-                                   cfg.batch_size,
-                                   cfg.num_workers,
-                                   cfg.dataset_type)
-
-    print("\nClass names:", class_names)
-
-    show_random_grid(os.path.join(dataset_base, "train"), class_names)
-    plot_label_distribution(os.path.join(dataset_base, "train"),
-                            os.path.join(dataset_base, "val"),
-                            os.path.join(dataset_base, "test"),
-                            class_names)
-
-    if args.model == "vgg16":
-        model = build_vgg16(num_classes=len(class_names),
-                            freeze_until_feature_idx=cfg.freeze_until_feature_idx)
-
-    elif args.model == "resnet":
-        model = build_resnet50(num_classes=len(class_names))
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
-
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=cfg.lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer, step_size=cfg.step_size, gamma=cfg.gamma
+    # ----------------------------------
+    # Load dataset
+    # ----------------------------------
+    image_datasets, dataloaders, sizes, class_names = build_datasets_and_loaders(
+        cfg.dataset,
+        cfg.batch_size,
+        cfg.num_workers,
     )
 
+    print("\nIlości danych:", sizes)
 
-    #CAM 
-    pneumonia_samples = []
-    if cfg.dataset_type == "pneumonia":
-        pne_dir = os.path.join(dataset_base, "test", "PNEUMONIA")
-        if os.path.exists(pne_dir):
-            files = os.listdir(pne_dir)[:cfg.n_cam_samples]
-            pneumonia_samples = [os.path.join(pne_dir, f) for f in files]
+    # Podgląd obrazków + rozkład klas
+    train_dir = os.path.join(cfg.dataset.path, "train")
+    val_dir = os.path.join(cfg.dataset.path, "val")
+    test_dir = os.path.join(cfg.dataset.path, "test")
 
-    trainer = Trainer(
-        device,
-        model,
-        criterion,
-        optimizer,
-        scheduler,
-        dataloaders["train"],       # train_dataloader
-        dataloaders.get("val"),     # val_dataloader
-        dataloaders.get("test"),    # test_dataloader
-        cfg.checkpoints_dir,
-        pneumonia_samples,
-        cfg.cam_class_id
-)
+    if os.path.exists(train_dir):
+        show_random_grid(train_dir, class_names, n_per_class=4)
 
+    plot_label_distribution(train_dir, val_dir, test_dir, class_names)
 
+    # ----------------------------------
+    # Class weights
+    # ----------------------------------
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    if cfg.use_class_weights and "train" in image_datasets:
+        labels = [lbl for _, lbl in image_datasets["train"]]
+        counts = Counter(labels)
+        total = sum(counts.values())
+        class_weights = torch.tensor(
+            [total / counts[i] for i in range(len(class_names))],
+            dtype=torch.float32,
+        ).to(device)
+        print("⚖ Wagi klas:", class_weights.tolist())
+    else:
+        class_weights = None
+
+    # ----------------------------------
+    # Model
+    # ----------------------------------
+    freeze = cfg.dataset.freeze_until_feature_idx
+
+    if args.model == "vgg16":
+        model = build_vgg16(
+            num_classes=len(class_names),
+            freeze_until_feature_idx=freeze,
+        )
+    else:
+        model = build_resnet50(
+            num_classes=len(class_names),
+            freeze_until_feature_idx=freeze,
+        )
+
+    model.to(device)
+
+    # =========================================================
+    # 🔥 POPRAWIONY BLOK CAM — JEDYNA ZMIANA
+    # =========================================================
+    cam_samples = []
+    cam_class_id = cfg.dataset.cam_class_id
+
+    if cfg.dataset.cam_enabled:
+        test_dir = os.path.join(
+            cfg.dataset.path,
+            "test",
+            cfg.dataset.cam_test_folder
+        )
+
+        if os.path.exists(test_dir):
+            files = [
+                os.path.join(test_dir, f)
+                for f in os.listdir(test_dir)
+                if f.lower().endswith((".jpg", ".jpeg", ".png"))
+            ]
+
+            cam_samples = files[: cfg.dataset.n_cam_samples]
+
+    # =========================================================
+    # TRYB VISUALIZE — BEZ TRENINGU
+    # =========================================================
     if args.visualize:
-        print("Wizualizacja\n")
+        if not args.checkpoint:
+            raise RuntimeError("Musisz podać checkpoint! --checkpoint NAZWA.pth")
 
-        checkpoint_path = os.path.join(cfg.checkpoints_dir, args.checkpoint)
-        ckpt = torch.load(checkpoint_path, map_location=device)
+        ckpt_path = os.path.join(cfg.checkpoints_dir, args.checkpoint)
+        print(f"\n📦 Wczytuję checkpoint: {ckpt_path}")
 
-        if "model_state_dict" in ckpt:
-            model.load_state_dict(ckpt["model_state_dict"])
-        else:
-            model.load_state_dict(ckpt)
+        model.load_state_dict(torch.load(ckpt_path, map_location=device))
 
-        model.eval()
+        trainer = Trainer(
+            device=device,
+            model=model,
+            criterion=nn.CrossEntropyLoss(weight=class_weights),
+            optimizer=None,
+            scheduler=None,
+            train_dataloader=dataloaders.get("train"),
+            val_dataloader=dataloaders.get("val"),
+            test_dataloader=dataloaders.get("test"),
+            checkpoint_path=cfg.checkpoints_dir,
+            pneumonia_samples=cam_samples,
+            cam_class_id=cam_class_id,
+        )
 
-        test_acc, test_loss, y_true, y_pred, _ = trainer.test()
-        plot_confmat_and_report(y_true, y_pred, class_names)
+        print("\n🧪 TESTING...\n")
+        test_acc, test_loss, targets, preds, _ = trainer.test()
 
-        if pneumonia_samples and not args.no_cam:
-            plot_cam_evolution(cfg.samples_dir, pneumonia_samples[:4], cfg.max_epochs)
+        plot_confmat_and_report(targets, preds, class_names)
+
+        if cam_samples and not args.no_cam:
+            plot_cam_evolution(
+                cfg.samples_dir,
+                cam_samples[: min(4, len(cam_samples))],
+                cfg.max_epochs,
+            )
 
         return
 
-    #TRENING
-   
+    # =========================================================
+    # NORMALNY TRENING
+    # =========================================================
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    optimizer = optim.AdamW(model.parameters(), lr=cfg.lr)
+    scheduler = optim.lr_scheduler.StepLR(
+        optimizer, step_size=cfg.step_size, gamma=cfg.gamma
+    )
+
+    trainer = Trainer(
+        device=device,
+        model=model,
+        criterion=criterion,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        train_dataloader=dataloaders.get("train"),
+        val_dataloader=dataloaders.get("val"),
+        test_dataloader=dataloaders.get("test"),
+        checkpoint_path=cfg.checkpoints_dir,
+        pneumonia_samples=cam_samples,
+        cam_class_id=cam_class_id,
+    )
+
     histories = []
 
-    for ep in range(1, cfg.max_epochs + 1):
-        print(f"\nEPOCH {ep}/{cfg.max_epochs}")
+    print("\nSTART TRAINING...\n")
 
-        tr_acc, tr_loss = trainer.train(ep, cfg.samples_dir)
-        va_acc, va_loss = trainer.evaluate(ep, cfg.samples_dir)
+    for epoch in range(1, cfg.max_epochs + 1):
+        tr_acc, tr_loss = trainer.train(epoch, cfg.samples_dir)
+        va_acc, va_loss = trainer.evaluate(epoch, cfg.samples_dir)
 
         histories.append({
-            "epoch": ep,
             "train_acc": tr_acc,
             "train_loss": tr_loss,
             "val_acc": va_acc,
             "val_loss": va_loss,
         })
 
- 
-    if dataloaders.get("test"):
-        test_acc, test_loss, y_true, y_pred, _ = trainer.test()
+    print("\nTESTING BEST MODEL...\n")
+    test_acc, test_loss, targets, preds, _ = trainer.test()
 
-        print(f"\nTest accuracy: {test_acc:.4f}")
-        print(f"Test loss: {test_loss:.4f}")
+    plot_history(histories, test_acc=test_acc, test_loss=test_loss)
+    plot_confmat_and_report(targets, preds, class_names)
 
-        plot_history(histories, test_acc, test_loss)
-        plot_confmat_and_report(y_true, y_pred, class_names)
-
-        if pneumonia_samples and not args.no_cam:
-            plot_cam_evolution(cfg.samples_dir, pneumonia_samples[:4], cfg.max_epochs)
+    if cam_samples and not args.no_cam:
+        plot_cam_evolution(
+            cfg.samples_dir,
+            cam_samples[: min(4, len(cam_samples))],
+            cfg.max_epochs,
+        )
 
 
 if __name__ == "__main__":

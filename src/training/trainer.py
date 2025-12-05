@@ -45,9 +45,9 @@ class Trainer:
         self.cam_layer = self._detect_cam_layer()
 
 
-    # ------------------------------------------------------------------------------
-    # 🔍 Automatyczne wykrywanie warstwy CAM (VGG / ResNet)
-    # ------------------------------------------------------------------------------
+    
+    # Automatyczne wykrywanie warstwy CAM (VGG / ResNet)
+   
     def _detect_cam_layer(self):
         if hasattr(self.model, "features"):  
             # VGG16 → ostatnia warstwa konwolucyjna FEATURES
@@ -56,7 +56,7 @@ class Trainer:
             # ResNet50 → ostatnia warstwa konwolucyjna LAYER4
             return [self.model.layer4[-1]]
         else:
-            raise ValueError("❌ Model nie ma ani features, ani layer4 — nie wiem, gdzie zrobić CAM.")
+            raise ValueError("Model nie ma ani features, ani layer4.")
 
 
     def _cam_transform(self):
@@ -67,10 +67,6 @@ class Trainer:
                                  [0.229, 0.224, 0.225]),
         ])
 
-
-    # ------------------------------------------------------------------------------
-    # 🎨 Generowanie CAM
-    # ------------------------------------------------------------------------------
     def save_cam_samples(self, epoch_nr: int, out_dir: str) -> None:
         if not self.pneumonia_samples:
             return
@@ -100,9 +96,7 @@ class Trainer:
             plt.imsave(out, vis)
 
 
-    # ------------------------------------------------------------------------------
-    # 🔥 TRENING
-    # ------------------------------------------------------------------------------
+
     def train(self, current_epoch_nr: int, cam_out_dir: str) -> Tuple[float, float]:
         self.model.train()
         if current_epoch_nr == 1:
@@ -134,9 +128,6 @@ class Trainer:
         self.scheduler.step()
         return n_ok / total, run_loss / total
 
-    # ------------------------------------------------------------------------------
-    # 📊 WALIDACJA
-    # ------------------------------------------------------------------------------
     def evaluate(self, current_epoch_nr: int, cam_out_dir: str) -> Tuple[float, float]:
         self.model.eval()
         run_loss, n_ok, total = 0.0, 0, 0
@@ -173,17 +164,15 @@ class Trainer:
             )
             torch.save(self.model.state_dict(), ckpt)
             self.best_model_path = ckpt
-            print(f"💾 Zapisano najlepszy model: {ckpt}")
+            print(f"Zapisano najlepszy model: {ckpt}")
 
         return val_acc, val_loss
 
 
-    # ------------------------------------------------------------------------------
-    # 🧪 TEST
-    # ------------------------------------------------------------------------------
+   
     def test(self):
         if self.test_dataloader is None:
-            print("⚠️ Brak test_dataloader — pomijam test.")
+            print("Brak test_dataloader — pomijam test.")
             return 0.0, 0.0, [], [], self.model
 
         self.model.eval()
@@ -215,6 +204,6 @@ class Trainer:
 
         if self.best_model_path:
             self.model.load_state_dict(torch.load(self.best_model_path, map_location=self.device))
-            print(f"📦 Wczytano najlepszy model z: {self.best_model_path}")
+            print(f"Wczytano najlepszy model z: {self.best_model_path}")
 
         return test_acc, test_loss, targets, preds_all, self.model
