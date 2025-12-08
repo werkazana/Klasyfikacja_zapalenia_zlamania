@@ -20,14 +20,14 @@ def build_resnet50(num_classes: int, freeze_until_feature_idx: int = None):
         model.layer1,
         model.layer2,
         model.layer3,
-        model.layer4   # <-- OSTATNIA warstwa CAM! nie wolno zamrażać
+        model.layer4   
     ]
 
-    last_conv_idx = len(layers) - 1   # czyli 7
+    last_conv_idx = len(layers) - 1   
 
-    # ---------------------------
+    
     # ZAMRAŻANIE WARSTW
-    # ---------------------------
+
     if freeze_until_feature_idx is not None:
 
         freeze_until = freeze_until_feature_idx
@@ -38,19 +38,18 @@ def build_resnet50(num_classes: int, freeze_until_feature_idx: int = None):
 
         # korekta, żeby CAM działał
         if freeze_until >= last_conv_idx:
-            print("⚠️ ResNet freeze skorygowany: layer4 musi zostać odblokowany dla CAM!")
+            print("ResNet freeze skorygowany")
             freeze_until = last_conv_idx - 1
 
-        print(f"🧊 ResNet50: zamrażam layers[:{freeze_until}]")
+        print(f"ResNet50: zamrażam layers[:{freeze_until}]")
 
         for i, layer in enumerate(layers):
             if i < freeze_until:
                 for param in layer.parameters():
                     param.requires_grad = False
 
-    # ---------------------------
+    
     # KOŃCOWY KLASYFIKATOR
-    # ---------------------------
     in_features = model.fc.in_features
     model.fc = nn.Sequential(
         nn.Linear(in_features, 512),
@@ -58,5 +57,5 @@ def build_resnet50(num_classes: int, freeze_until_feature_idx: int = None):
         nn.Dropout(0.4),
         nn.Linear(512, num_classes),
     )
-
+    
     return model
