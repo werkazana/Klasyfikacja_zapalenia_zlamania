@@ -59,7 +59,6 @@ def parse_args():
         help="dla pneumonia użyj oryginalnego podziału (bez chest_xray_new)",
     )
 
-    # tryb visualize tylko z checkpointu
     p.add_argument(
         "--visualize",
         action="store_true",
@@ -82,18 +81,14 @@ def parse_args():
 
 
 
-# =========================================================
 # MAIN
-# =========================================================
-
 def main():
     args = parse_args()
 
     BASE_DIR = r"C:\Users\Weronika\Desktop\inzynierka\vgg16"
 
-    # ----------------------------------
+
     # CONFIG injection – wybór datasetu
-    # ----------------------------------
     if args.dataset_type == "pneumonia":
         dataset_cfg = make_pneumonia_dataset_config(BASE_DIR)
     else:
@@ -112,15 +107,12 @@ def main():
     print("Model:", args.model)
     print("--------------------------------------")
 
-    # ----------------------------------
     # Seed + foldery
-    # ----------------------------------
     seed_everything(cfg.seed)
     ensure_dirs(cfg.checkpoints_dir, cfg.samples_dir)
 
-    # ----------------------------------
-    # Pneumonia – ewentualny split 80/10/10
-    # ----------------------------------
+
+    # Pneumonia – ewentualny split
     if cfg.dataset_type == "pneumonia" and not args.use_original_split:
         chest_new = os.path.join(BASE_DIR, "archive", "chest_xray_new")
         if not os.path.exists(chest_new):
@@ -131,9 +123,8 @@ def main():
         cfg.dataset.path = chest_new
         print("Używam chest_xray_new")
 
-    # ----------------------------------
+    
     # Load dataset
-    # ----------------------------------
     image_datasets, dataloaders, sizes, class_names = build_datasets_and_loaders(
         cfg.dataset,
         cfg.batch_size,
@@ -152,9 +143,7 @@ def main():
 
     plot_label_distribution(train_dir, val_dir, test_dir, class_names)
 
-    # ----------------------------------
     # Class weights
-    # ----------------------------------
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     if cfg.use_class_weights and "train" in image_datasets:
@@ -165,13 +154,13 @@ def main():
             [total / counts[i] for i in range(len(class_names))],
             dtype=torch.float32,
         ).to(device)
-        print("⚖ Wagi klas:", class_weights.tolist())
+        print("Wagi klas:", class_weights.tolist())
     else:
         class_weights = None
 
-    # ----------------------------------
+    
     # Model
-    # ----------------------------------
+    
     freeze = cfg.dataset.freeze_until_feature_idx
 
     if args.model == "vgg16":
@@ -187,9 +176,8 @@ def main():
 
     model.to(device)
 
-    # =========================================================
-    # 🔥 POPRAWIONY BLOK CAM — JEDYNA ZMIANA
-    # =========================================================
+    
+    #BLOK CAM
     cam_samples = []
     cam_class_id = cfg.dataset.cam_class_id
 
@@ -209,15 +197,15 @@ def main():
 
             cam_samples = files[: cfg.dataset.n_cam_samples]
 
-    # =========================================================
+    
     # TRYB VISUALIZE — BEZ TRENINGU
-    # =========================================================
+    
     if args.visualize:
         if not args.checkpoint:
-            raise RuntimeError("Musisz podać checkpoint! --checkpoint NAZWA.pth")
+            raise RuntimeError("Musisz podać checkpoint!")
 
         ckpt_path = os.path.join(cfg.checkpoints_dir, args.checkpoint)
-        print(f"\n📦 Wczytuję checkpoint: {ckpt_path}")
+        print(f"\nWczytuję checkpoint: {ckpt_path}")
 
         model.load_state_dict(torch.load(ckpt_path, map_location=device))
 
@@ -235,7 +223,7 @@ def main():
             cam_class_id=cam_class_id,
         )
 
-        print("\n🧪 TESTING...\n")
+        print("\nTESTING...\n")
         test_acc, test_loss, targets, preds, _ = trainer.test()
 
         plot_confmat_and_report(targets, preds, class_names)
@@ -249,9 +237,8 @@ def main():
 
         return
 
-    # =========================================================
+  
     # NORMALNY TRENING
-    # =========================================================
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = optim.AdamW(model.parameters(), lr=cfg.lr)
     scheduler = optim.lr_scheduler.StepLR(

@@ -4,9 +4,8 @@ import os
 from torchvision import transforms
 
 
-# ============================================================
-#  Konfiguracja pojedynczego datasetu (IOC)
-# ============================================================
+
+#  Konfiguracja pojedynczego datasetu
 
 @dataclass
 class DatasetConfig:
@@ -33,9 +32,9 @@ class DatasetConfig:
     image_size: Tuple[int, int] = (224, 224)
 
 
-# ============================================================
+
 #  Główny CONFIG – trzyma DatasetConfig (pełne IOC)
-# ============================================================
+
 
 @dataclass
 class Config:
@@ -112,9 +111,9 @@ class Config:
         return self.dataset.n_cam_samples
 
 
-# ============================================================
-#  Fabryki IOC – poprawne
-# ============================================================
+
+#IOC
+
 
 def make_pneumonia_dataset_config(base_dir: str) -> DatasetConfig:
     path = os.path.join(base_dir, "archive", "chest_xray")
