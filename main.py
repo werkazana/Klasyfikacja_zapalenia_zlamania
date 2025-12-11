@@ -24,6 +24,7 @@ from src.utils.visualize import (
     plot_history,
     plot_confmat_and_report,
     plot_cam_evolution,
+    plot_cam_grid,          
 )
 
 def parse_args():
@@ -77,6 +78,18 @@ def parse_args():
         help="wyłącz rysowanie CAM",
     )
 
+    p.add_argument(
+        "--visualize-cam-grid",
+        action="store_true",
+        help="Wyświetl CAM w formacie 2xN dla podanych obrazów"
+    )
+
+    p.add_argument(
+        "--images",
+        nargs="*",
+        help="Ścieżki obrazów do CAM 2xN"
+    )
+
     return p.parse_args()
 
 
@@ -86,7 +99,6 @@ def main():
     args = parse_args()
 
     BASE_DIR = r"C:\Users\Weronika\Desktop\inzynierka\vgg16"
-
 
     # CONFIG injection – wybór datasetu
     if args.dataset_type == "pneumonia":
@@ -111,7 +123,6 @@ def main():
     seed_everything(cfg.seed)
     ensure_dirs(cfg.checkpoints_dir, cfg.samples_dir)
 
-
     # Pneumonia – ewentualny split
     if cfg.dataset_type == "pneumonia" and not args.use_original_split:
         chest_new = os.path.join(BASE_DIR, "archive", "chest_xray_new")
@@ -123,7 +134,6 @@ def main():
         cfg.dataset.path = chest_new
         print("Używam chest_xray_new")
 
-    
     # Load dataset
     image_datasets, dataloaders, sizes, class_names = build_datasets_and_loaders(
         cfg.dataset,
@@ -158,9 +168,7 @@ def main():
     else:
         class_weights = None
 
-    
     # Model
-    
     freeze = cfg.dataset.freeze_until_feature_idx
 
     if args.model == "vgg16":
@@ -176,8 +184,7 @@ def main():
 
     model.to(device)
 
-    
-    #BLOK CAM
+    # BLOK CAM
     cam_samples = []
     cam_class_id = cfg.dataset.cam_class_id
 
@@ -197,9 +204,26 @@ def main():
 
             cam_samples = files[: cfg.dataset.n_cam_samples]
 
-    
+
+    #TRYB CAM GRID
+  
+    if args.visualize_cam_grid:
+        if not args.checkpoint:
+            raise RuntimeError("Musisz podać checkpoint!")
+        if not args.images:
+            raise RuntimeError("Musisz podać obrazy --images img1 img2 ...")
+
+        ckpt_path = os.path.join(cfg.checkpoints_dir, args.checkpoint)
+        print(f"\nWczytuję checkpoint do CAM GRID: {ckpt_path}")
+
+        model.load_state_dict(torch.load(ckpt_path, map_location=device))
+
+        plot_cam_grid(model, args.images, target_class=cam_class_id)
+        return
+ 
+
+
     # TRYB VISUALIZE — BEZ TRENINGU
-    
     if args.visualize:
         if not args.checkpoint:
             raise RuntimeError("Musisz podać checkpoint!")
@@ -237,7 +261,6 @@ def main():
 
         return
 
-  
     # NORMALNY TRENING
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     optimizer = optim.AdamW(model.parameters(), lr=cfg.lr)
